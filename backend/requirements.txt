@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+numpy
+gensim
+scikit-learn
+nltk
+transformers
+torch
+joblib
+requests
+python-dotenv
+dotenv
