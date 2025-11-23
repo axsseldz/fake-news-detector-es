@@ -235,3 +235,63 @@ def predict_beto2_finetuned(payload: NewsInput):
         "label": label,
         "scores": scores,
     }
+
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash") 
+
+@app.post("/generate/gemini")
+def generate_news(req: GenerationRequest):
+    """
+    Genera una noticia falsa o verdadera usando Gemini y regresa el texto.
+    Requiere GEMINI_API_KEY (y opcionalmente GEMINI_MODEL).
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Falta GEMINI_API_KEY en el backend.")
+
+    tone = "falsa" if req.flavor == "fake" else "verdadera y verificable"
+    prompt = (
+        f"Redacta una breve noticia {tone} en español (2-3 frases). "
+        "Incluye un titular y un pequeño párrafo, tono periodístico neutral. "
+        "No añadas preámbulos, disculpas ni frases como 'Aquí tienes'; devuelve solo el texto de la noticia, sin etiquetas."
+    )
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
+
+    try:
+        resp = requests.post(
+            url,
+            params={"key": api_key},
+            json={
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": prompt}],
+                    }
+                ]
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        text = (
+            data.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text")
+        )
+
+        if not text:
+            raise HTTPException(status_code=502, detail="Respuesta vacía de Gemini.")
+
+        return {"text": text.strip()}
+
+    except HTTPException:
+        raise
+    except requests.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Error HTTP desde Gemini: {exc} - cuerpo: {exc.response.text if exc.response else ''}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error al generar con Gemini: {exc}") from exc
