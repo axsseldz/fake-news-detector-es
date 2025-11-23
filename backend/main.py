@@ -119,3 +119,119 @@ try:
     beto2_tokenizer, beto2_model = _load_beto_stack(BETO2_DIR)
 except Exception as exc:  
     raise RuntimeError(f"Failed to load models: {exc}") from exc
+
+
+@app.get("/")
+def root():
+    return {
+        "service": "Fake News Detector",
+        "models": ["word2vec_v1", "word2vec_v2", "beto_finetuned", "beto2_finetuned"],
+    }
+
+
+def _predict_word2vec(payload: NewsInput, stack: Dict[str, object], model_name: str):
+    text = payload.text
+    tfidf = stack.get("tfidf")
+    clf: Union[SVC, LinearSVC] = stack.get("clf")  # type: ignore
+
+    try:
+        features = None
+        if tfidf is not None:
+            features = tfidf.transform([text])
+        if features is None and stack.get("w2v") is not None:
+            tokens = _tokenize(text)
+            features = _vectorize(tokens, stack["w2v"]).reshape(1, -1)  # type: ignore
+        if features is None:
+            raise ValueError("No feature transformer available.")
+
+        # If feature dimension mismatches the classifier expectation, fall back to W2V mean vector.
+        expected = getattr(clf, "n_features_in_", None)
+        if expected and hasattr(features, "shape") and features.shape[1] != expected:
+            if stack.get("w2v") is not None:
+                tokens = _tokenize(text)
+                features = _vectorize(tokens, stack["w2v"]).reshape(1, -1)  # type: ignore
+            else:
+                raise ValueError(
+                    f"Feature dimension {features.shape[1]} does not match classifier expectation {expected}."
+                )
+
+        raw_label = clf.predict(features)[0]
+        label = "true" if str(raw_label).strip() in {"1", "true", "True"} else "false"
+
+        scores_out: Optional[List[float]] = None
+        if hasattr(clf, "predict_proba"):
+            scores_out = clf.predict_proba(features)[0].tolist()  # type: ignore
+        elif hasattr(clf, "decision_function"):
+            scores = clf.decision_function(features)  # type: ignore
+            if hasattr(scores, "tolist"):
+                scores = scores.tolist()
+            if isinstance(scores, (list, tuple)):
+                scores_out = list(scores)
+            elif isinstance(scores, (int, float)):
+                scores_out = [float(scores)]
+
+        resp = {"model": model_name, "label": label}
+        if scores_out is not None:
+            resp["scores"] = scores_out
+            resp["proba"] = scores_out
+        return resp
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"{model_name} inference error: {exc}") from exc
+
+
+@app.post("/predict/word2vec_v1")
+def predict_word2vec_v1(payload: NewsInput):
+    return _predict_word2vec(payload, w2v_v1_stack, "word2vec_v1")
+
+
+@app.post("/predict/word2vec_v2")
+def predict_word2vec_v2(payload: NewsInput):
+    return _predict_word2vec(payload, w2v_v2_stack, "word2vec_v2")
+
+
+@app.post("/predict/beto_finetuned")
+def predict_beto_finetuned(payload: NewsInput):
+    inputs = beto_tokenizer(
+        payload.text,
+        return_tensors="pt",
+        truncation=True,
+        padding=True,
+        max_length=512,
+    )
+
+    with torch.no_grad():
+        outputs = beto_model(**inputs)
+        scores = torch.softmax(outputs.logits, dim=1).squeeze().tolist()
+
+    label_index = int(np.argmax(scores))
+    label = "true" if label_index == 1 else "fake"
+
+    return {
+        "model": "beto_finetuned",
+        "label": label,
+        "scores": scores,
+    }
+
+
+@app.post("/predict/beto2_finetuned")
+def predict_beto2_finetuned(payload: NewsInput):
+    inputs = beto2_tokenizer(
+        payload.text,
+        return_tensors="pt",
+        truncation=True,
+        padding=True,
+        max_length=512,
+    )
+
+    with torch.no_grad():
+        outputs = beto2_model(**inputs)
+        scores = torch.softmax(outputs.logits, dim=1).squeeze().tolist()
+
+    label_index = int(np.argmax(scores))
+    label = "true" if label_index == 1 else "fake"
+
+    return {
+        "model": "beto2_finetuned",
+        "label": label,
+        "scores": scores,
+    }
