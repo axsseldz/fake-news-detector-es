@@ -5,7 +5,7 @@ Word2Vec v1/v2 (TF-IDF + LinearSVC) y BETO v1/v2 (fine-tuning de BERT).
 
 ## Demo visual
 Vista de la interfaz
-- ![Interfaz](https://shorturl.at/0U6HR)
+- ![Interfaz](./frontend/app.png)
 
 ## Notebook de los modelos
 - Entrenamiento y preparación de los cuatro modelos: https://colab.research.google.com/drive/1Ihj6gFfU8Dj3WanaLHlq3onYBtwHfN95?usp=sharing
